@@ -1,0 +1,35 @@
+﻿{
+  "folders": [
+    { "path": "." },
+    { "path": "frontend" }
+  ],
+  "settings": {
+    // Python(WSL 가상환경) 인터프리터 경로
+    "python.defaultInterpreterPath": ".venv/bin/python",
+
+    // 저장 시 포맷팅
+    "editor.formatOnSave": true,
+
+    // 탐색기에서 불필요한 폴더 숨김
+    "files.exclude": {
+      "**/__pycache__": true,
+      "**/.venv": true,
+      "**/node_modules": true
+    },
+
+    // Ruff(권장), Black과 함께 사용
+    "ruff.enable": true
+  },
+  "extensions": {
+    "recommendations": [
+      "ms-python.python",
+      "ms-python.vscode-pylance",
+      "charliermarsh.ruff",
+      "ms-azuretools.vscode-docker",
+      "ms-vscode-remote.remote-wsl",
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "redhat.vscode-yaml"
+    ]
+  }
+}
