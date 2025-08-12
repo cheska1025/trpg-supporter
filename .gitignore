@@ -13,3 +13,5 @@ frontend/dist/
 
 # OS / misc
 .DS_Store
+frontend/node_modules/
+frontend/dist/
