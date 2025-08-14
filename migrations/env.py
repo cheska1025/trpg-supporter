@@ -1,7 +1,9 @@
 from __future__ import annotations
+
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+
 from alembic import context
+from sqlalchemy import engine_from_config, pool
 
 from backend.app.core.config import settings
 from backend.app.models import Base  # target_metadata
@@ -20,7 +22,7 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def run_migrations_offline():
+def run_migrations_offline() -> None:
     """오프라인 모드에서 마이그레이션 실행 (SQL 스크립트 출력)"""
     url = settings.db_url
     context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
@@ -29,7 +31,7 @@ def run_migrations_offline():
         context.run_migrations()
 
 
-def run_migrations_online():
+def run_migrations_online() -> None:
     """온라인 모드에서 마이그레이션 실행 (DB에 직접 적용)"""
     connectable = engine_from_config(
         {"sqlalchemy.url": settings.db_url},
@@ -44,7 +46,6 @@ def run_migrations_online():
             context.run_migrations()
 
 
-# 모드에 따라 실행 함수 선택
 if context.is_offline_mode():
     run_migrations_offline()
 else:

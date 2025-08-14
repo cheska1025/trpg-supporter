@@ -1,12 +1,20 @@
 from __future__ import annotations
+
 from contextlib import contextmanager
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import Session, sessionmaker
+
 from backend.app.core.config import settings
 
+# 단일 설정 진입점: ~/.trpg/data.db (기본) 또는 환경변수 DATABASE_URL
 engine = create_engine(settings.db_url, future=True, echo=False)
+
 SessionLocal = sessionmaker(
-    bind=engine, autoflush=False, autocommit=False, expire_on_commit=False
+    bind=engine,
+    autoflush=False,
+    autocommit=False,
+    expire_on_commit=False,
 )
 
 
