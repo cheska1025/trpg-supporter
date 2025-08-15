@@ -1,13 +1,14 @@
 from __future__ import annotations
+
 from backend.app.core.db import session_scope
 from backend.app.models import (
-    User,
-    Session,
     Character,
+    DiceLog,
     Encounter,
     Initiative,
-    DiceLog,
     LogEntry,
+    Session,
+    User,
 )
 
 
