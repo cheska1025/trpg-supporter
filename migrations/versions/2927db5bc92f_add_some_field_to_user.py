@@ -6,17 +6,16 @@ Create Date: 2025-08-13 09:00:25.269980
 
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "2927db5bc92f"
-down_revision: Union[str, Sequence[str], None] = "31ba4b09bc8d"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "31ba4b09bc8d"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -68,9 +67,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        "ix_char_session_name", "characters", ["session_id", "name"], unique=True
-    )
+    op.create_index("ix_char_session_name", "characters", ["session_id", "name"], unique=True)
     op.create_index(op.f("ix_characters_name"), "characters", ["name"], unique=False)
     op.create_table(
         "dice_logs",
@@ -91,9 +88,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_dice_logs_session_id"), "dice_logs", ["session_id"], unique=False
-    )
+    op.create_index(op.f("ix_dice_logs_session_id"), "dice_logs", ["session_id"], unique=False)
     op.create_table(
         "encounters",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -106,9 +101,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_encounters_session_id"), "encounters", ["session_id"], unique=False
-    )
+    op.create_index(op.f("ix_encounters_session_id"), "encounters", ["session_id"], unique=False)
     op.create_table(
         "log_entries",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -122,9 +115,7 @@ def upgrade() -> None:
         ),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(
-        op.f("ix_log_entries_session_id"), "log_entries", ["session_id"], unique=False
-    )
+    op.create_index(op.f("ix_log_entries_session_id"), "log_entries", ["session_id"], unique=False)
     op.create_table(
         "initiatives",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -133,9 +124,7 @@ def upgrade() -> None:
         sa.Column("value", sa.Integer(), nullable=False),
         sa.Column("order", sa.Integer(), nullable=True),
         sa.Column("is_delayed", sa.Boolean(), nullable=False),
-        sa.CheckConstraint(
-            "value >= -100 and value <= 1000", name="ck_init_value_range"
-        ),
+        sa.CheckConstraint("value >= -100 and value <= 1000", name="ck_init_value_range"),
         sa.ForeignKeyConstraint(
             ["encounter_id"],
             ["encounters.id"],
