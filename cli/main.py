@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 from pathlib import Path
 
@@ -14,24 +16,30 @@ STATE.parent.mkdir(parents=True, exist_ok=True)
 
 
 def _save_tracker(tr: Tracker) -> None:
+    """Tracker 상태를 최소 정보(round, entries)로 저장."""
+    st = tr.state()  # {"round", "current", "entries":[{name,value,delayed,effects:[...]}]}
     data = {
-        "round": tr.round,
-        "idx": tr.idx,
-        "entries": [{"name": e.name, "value": e.value, "delayed": e.delayed} for e in tr.entries],
+        "round": st["round"],
+        "entries": [
+            {"name": e["name"], "value": int(e["value"]), "delayed": bool(e["delayed"])}
+            for e in st["entries"]
+        ],
     }
-    STATE.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    STATE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _load_tracker() -> Tracker:
+    """저장된 상태에서 Tracker 복원(라운드/엔트리만). 커서는 새 라운드 시작 상태."""
     tr = Tracker()
     if STATE.exists():
         data = json.loads(STATE.read_text(encoding="utf-8"))
         tr.round = int(data.get("round", 1))
-        tr.idx = int(data.get("idx", 0))
         for it in data.get("entries", []):
-            tr.add(str(it["name"]), int(it["value"]))
-        # 안전 범위로 idx 보정
-        tr.idx = min(tr.idx, max(len(tr.entries) - 1, 0))
+            name = str(it["name"])
+            value = int(it["value"])
+            tr.add(name, value)
+            if bool(it.get("delayed", False)):
+                tr.delay(name)
     return tr
 
 
@@ -47,19 +55,68 @@ def _load_tracker() -> Tracker:
     )
 )
 def cli():
+    """루트 그룹"""
     pass
 
 
 # ---- 주사위 ----
 @cli.command("roll", help='주사위 굴림 (예: trpg roll "2d6+3")')
 @click.argument("formula")
-def rollcmd(formula: str):
-    res = roll(formula)
-    rprint({"formula": res.formula, "rolls": res.rolls, "total": res.total})
+@click.option("--actor", help="굴린 주체명(표시용)")
+@click.option("--seed", type=int, help="랜덤 시드(재현성)")
+@click.option("--adv", is_flag=True, help="어드밴티지")
+@click.option("--dis", is_flag=True, help="디스어드밴티지")
+@click.option("--store", is_flag=True, help="DB에 DiceLog 저장")
+@click.option("--session-id", type=int, help="저장 시 대상 세션 ID")
+@click.option("--roller-id", type=int, help="저장 시 사용자(roller) ID")
+def rollcmd(
+    formula: str,
+    actor: str | None,
+    seed: int | None,
+    adv: bool,
+    dis: bool,
+    store: bool,
+    session_id: int | None,
+    roller_id: int | None,
+):
+    """
+    주사위 굴림. --store 사용 시 DiceLog로 DB에 저장합니다.
+    """
+    # core.dice.roll(v1) 시그니처에 맞춰 전달
+    res = roll(formula, actor=actor, seed=seed, adv=adv, dis=dis)
+
+    out = {
+        "formula": res.formula,
+        "rolls": res.rolls,
+        "total": res.total,
+        "actor": getattr(res, "actor", actor),
+        "detail": getattr(res, "detail", {"rolls": res.rolls}),
+    }
+
+    # --store 지정 시 DB 저장
+    if store:
+        if not session_id:
+            rprint({"error": "--store 사용 시 --session-id가 필요합니다."})
+            return
+        try:
+            from backend.app.services.dice_log import save_dice_log
+
+            new_id = save_dice_log(
+                session_id=session_id,
+                roller_id=roller_id,
+                total=res.total,
+                formula=res.formula,
+                detail=out["detail"],
+            )
+            out["saved_id"] = new_id
+        except Exception as e:  # noqa: BLE001
+            out["db_error"] = str(e)
+
+    rprint(out)
 
 
 # ---- 이니시 ----
-@cli.group(help="이니시 명령군: add / update / remove / next")
+@cli.group(help="이니시 명령군: add / update / remove / next / reset")
 def init():
     pass
 
@@ -69,9 +126,13 @@ def init():
 @click.argument("value", type=int)
 def init_add(name: str, value: int):
     tr = _load_tracker()
-    tr.add(name, value)
+    try:
+        tr.add(name, value)
+    except ValueError as e:  # 이미 존재
+        rprint({"error": str(e)})
+        return
     _save_tracker(tr)
-    rprint([{"name": e.name, "value": e.value} for e in tr.entries])
+    rprint([{"name": e["name"], "value": e["value"]} for e in tr.state()["entries"]])
 
 
 @init.command("update", help="이니시 수치 수정 (예: trpg init update Rogue 14)")
@@ -79,36 +140,25 @@ def init_add(name: str, value: int):
 @click.argument("value", type=int)
 def init_update(name: str, value: int):
     tr = _load_tracker()
-    found = False
-    for e in tr.entries:
-        if e.name == name:
-            e.value = value
-            found = True
-    if not found:
-        rprint({"error": f"'{name}' 항목을 찾지 못했습니다."})
+    try:
+        tr.update(name, value)
+    except ValueError as e:
+        rprint({"error": str(e)})
         return
-    # 값 변경 후 재정렬 및 인덱스 보정
-    tr.entries.sort()
-    tr.idx = min(tr.idx, max(len(tr.entries) - 1, 0))
     _save_tracker(tr)
-    rprint([{"name": e.name, "value": e.value} for e in tr.entries])
+    rprint([{"name": e["name"], "value": e["value"]} for e in tr.state()["entries"]])
 
 
 @init.command("remove", help="이니시 삭제 (예: trpg init remove Rogue)")
 @click.argument("name")
 def init_remove(name: str):
     tr = _load_tracker()
-    before = len(tr.entries)
-    tr.entries = [e for e in tr.entries if e.name != name]
-    after = len(tr.entries)
-    if before == after:
+    ok = tr.remove(name)
+    if not ok:
         rprint({"error": f"'{name}' 항목을 찾지 못했습니다."})
         return
-    # 삭제 후 인덱스/라운드 안전 보정
-    if tr.idx >= len(tr.entries):
-        tr.idx = 0 if tr.entries else 0
     _save_tracker(tr)
-    rprint([{"name": e.name, "value": e.value} for e in tr.entries])
+    rprint([{"name": e["name"], "value": e["value"]} for e in tr.state()["entries"]])
 
 
 @init.command("next", help="다음 턴으로 진행(라운드 자동 증가)")
