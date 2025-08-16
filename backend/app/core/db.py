@@ -1,22 +1,27 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from backend.app.core.config import settings
 
+# 단일 설정 진입점: ~/.trpg/data.db (기본) 또는 env DATABASE_URL
 engine = create_engine(settings.db_url, future=True, echo=False)
-SessionLocal = sessionmaker(
-    bind=engine,
-    autoflush=False,
-    autocommit=False,
-    expire_on_commit=False,
-)
+
+# 세션팩토리
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, future=True)
 
 
-def session_scope() -> Session:
-    """트랜잭션/세션 헬퍼 (commit/rollback 보장)"""
-    s: Session = SessionLocal()
+@contextmanager
+def session_scope():
+    """
+    SQLAlchemy 세션 컨텍스트 매니저.
+    with session_scope() as s:
+        ... DB 작업 ...
+    """
+    s = SessionLocal()
     try:
         yield s
         s.commit()
