@@ -1,5 +1,6 @@
 from core.initiative import InitiativeTracker
 
+
 def test_round_progress_and_stable_ties():
     t = InitiativeTracker()
     t.add("Rogue", 15)
@@ -21,9 +22,12 @@ def test_round_progress_and_stable_ties():
     assert t.round == 2
     assert t.current().name == "Rogue"
 
+
 def test_delay_and_reentry_in_same_round():
     t = InitiativeTracker()
-    t.add("Rogue", 18); t.add("Mage", 14); t.add("Orc", 10)
+    t.add("Rogue", 18)
+    t.add("Mage", 14)
+    t.add("Orc", 10)
     t.start_encounter()
 
     assert t.current().name == "Rogue"
@@ -35,12 +39,16 @@ def test_delay_and_reentry_in_same_round():
     assert t.round == 2
     assert t.current().name == "Rogue"  # 재진입 규칙 확인
 
+
 def test_reentry_ordering_policy():
     t = InitiativeTracker()
-    t.add("A", 20); t.add("B", 15); t.add("C", 10)
+    t.add("A", 20)
+    t.add("B", 15)
+    t.add("C", 10)
     t.start_encounter()
     t.delay("A")
-    t.next_turn(); t.next_turn()  # B, C
-    t.return_from_delay("A")      # 정책상 재배치
+    t.next_turn()
+    t.next_turn()  # B, C
+    t.return_from_delay("A")  # 정책상 재배치
     names = [s.name for s in t.order]
     assert "A" in names

@@ -4,14 +4,16 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+
 import click
 
 from core.dice import roll as dice_roll
-from core.log import LogManager, append_markdown  # append_markdown은 호환용으로만 임포트
+from core.log import LogManager  # append_markdown은 호환용으로만 임포트
 
 APP_DIRNAME = ""  # 비워두면 바로 TRPG_HOME 루트 사용
 SESSION_FILE = "session.json"
 INIT_FILE = "initiative.json"
+
 
 def trpg_home() -> Path:
     base = os.getenv("TRPG_HOME")
@@ -23,16 +25,20 @@ def trpg_home() -> Path:
     d.mkdir(parents=True, exist_ok=True)
     return d
 
+
 def session_path() -> Path:
     return trpg_home() / SESSION_FILE
 
+
 def init_path() -> Path:
     return trpg_home() / INIT_FILE
+
 
 def load_json(p: Path, default):
     if p.exists():
         return json.loads(p.read_text(encoding="utf-8"))
     return default
+
 
 def save_json(p: Path, data) -> None:
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -90,7 +96,7 @@ def enc_start():
     if not s:
         raise click.UsageError("No session found. Run: trpg session new <title> first.")
     init = {
-        "order": [],   # [{name, value, delayed}]
+        "order": [],  # [{name, value, delayed}]
         "index": 0,
         "round": 1,
     }

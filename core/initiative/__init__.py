@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import List, Optional
 
 __all__ = ["InitiativeTracker", "Tracker"]
 
@@ -15,6 +14,7 @@ class _Entry:
     - seq: 입력 순서(동점 시 안정 정렬 보장)
     - delayed: 보류 상태
     """
+
     name: str
     value: int
     seq: int
@@ -38,10 +38,10 @@ class InitiativeTracker:
     """
 
     def __init__(self) -> None:
-        self._entries: List[_Entry] = []
-        self._seq = 0            # 동점 안정 정렬을 위한 입력 순서
-        self._index = 0          # 현재 턴 인덱스
-        self.round = 0           # 0 = 미시작, 1부터 시작
+        self._entries: list[_Entry] = []
+        self._seq = 0  # 동점 안정 정렬을 위한 입력 순서
+        self._index = 0  # 현재 턴 인덱스
+        self.round = 0  # 0 = 미시작, 1부터 시작
         self._started = False
 
     # ---------- 등록/정렬 ----------
@@ -75,7 +75,9 @@ class InitiativeTracker:
     @property
     def order(self):
         """현재 정렬 순서를 반환(테스트에서 리스트 확인용)"""
-        return [SimpleNamespace(name=e.name, value=e.value, delayed=e.delayed) for e in self._entries]
+        return [
+            SimpleNamespace(name=e.name, value=e.value, delayed=e.delayed) for e in self._entries
+        ]
 
     # ---------- 턴/라운드 ----------
     def next_turn(self) -> None:
@@ -128,6 +130,7 @@ class InitiativeTracker:
         """Back-compat alias for next_turn(). 테스트에서 Tracker.next()를 호출하는 경우 대응."""
         self.next_turn()
         return self.current()
+
 
 # 하위 호환: 기존 이름 Tracker도 그대로 쓸 수 있도록 별칭 제공
 Tracker = InitiativeTracker

@@ -1,5 +1,7 @@
 from click.testing import CliRunner
+
 from cli.main import cli  # pyproject: [tool.poetry.scripts] trpg = "cli.main:cli"
+
 
 def test_session_roll_export(tmp_path, monkeypatch):
     runner = CliRunner()

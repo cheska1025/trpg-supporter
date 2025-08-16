@@ -1,12 +1,13 @@
-from core.log import LogManager
-from core.log import append_markdown
 import json
+
+from core.log import LogManager, append_markdown
+
 
 def test_append_and_export_md_json(tmp_path, monkeypatch):
     monkeypatch.setenv("TRPG_HOME", str(tmp_path))
     lm = LogManager(session_id="S1")
 
-    lm.append_system(event="dice", data={"actor":"Rogue", "formula":"1d20+5", "total":17})
+    lm.append_system(event="dice", data={"actor": "Rogue", "formula": "1d20+5", "total": 17})
     lm.append_narrative(text="Goblin과의 전투 개시", scene="prologue")
 
     out_md = lm.export("md")
@@ -26,6 +27,7 @@ def test_append_and_export_md_json(tmp_path, monkeypatch):
     else:
         data = json.loads(out_json)
         assert any(item.get("type") == "system" for item in data)
+
 
 def test_append_markdown(tmp_path):
     p = tmp_path / "exports" / "demo.md"

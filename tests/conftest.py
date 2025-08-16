@@ -1,4 +1,8 @@
-import os, shutil, tempfile, pytest
+import shutil
+import tempfile
+
+import pytest
+
 
 @pytest.fixture(autouse=True)
 def _isolate_trpg_home(monkeypatch):

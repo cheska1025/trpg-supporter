@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Optional, Literal
+from typing import Any, Literal
 
 __all__ = ["LogManager", "append_markdown"]
 
@@ -25,10 +25,10 @@ def _home_root() -> Path:
 class _LogItem:
     type: Literal["system", "narrative"]
     ts: str
-    event: Optional[str] = None
-    data: Optional[dict] = None
-    text: Optional[str] = None
-    scene: Optional[str] = None
+    event: str | None = None
+    data: dict | None = None
+    text: str | None = None
+    scene: str | None = None
 
 
 class LogManager:
@@ -42,18 +42,14 @@ class LogManager:
 
     def __init__(self, session_id: str) -> None:
         self.session_id = session_id
-        self._items: List[_LogItem] = []
+        self._items: list[_LogItem] = []
 
     # ---------- append ----------
     def append_system(self, event: str, data: dict[str, Any]) -> None:
-        self._items.append(
-            _LogItem(type="system", ts=self._now(), event=event, data=data)
-        )
+        self._items.append(_LogItem(type="system", ts=self._now(), event=event, data=data))
 
-    def append_narrative(self, text: str, scene: Optional[str] = None) -> None:
-        self._items.append(
-            _LogItem(type="narrative", ts=self._now(), text=text, scene=scene)
-        )
+    def append_narrative(self, text: str, scene: str | None = None) -> None:
+        self._items.append(_LogItem(type="narrative", ts=self._now(), text=text, scene=scene))
 
     # ---------- export ----------
     def export(self, fmt: Literal["md", "json"]) -> str:
