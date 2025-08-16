@@ -1,36 +1,51 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass
+import re
+from typing import Dict, List
+
+__all__ = ["roll"]
+
+# NdM(+/-K) 형태만 지원하는 최소 파서
+_DICE_RE = re.compile(r"^\s*(\d+)d(\d+)\s*([+-]\s*\d+)?\s*$", re.IGNORECASE)
 
 
-@dataclass
-class RollResult:
-    formula: str
-    total: int
-    rolls: list[int]
+class RollResult(dict):
+    """dict처럼도, 속성처럼도 접근 가능한 결과 객체"""
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.__dict__ = self  # r.total / r["total"] 모두 허용
 
 
 def roll(formula: str) -> RollResult:
     """
-    v1 지원: NdM(+/-X)  ex) 2d6+3, 1d20-1
+    예:
+      roll("2d6+3") -> {"formula":"2d6+3","total":13,"detail":[4,6],"rolls":[4,6],"crit":False,"fumble":False}
+      roll("1d20")  -> 20/1에 대해 crit/fumble 플래그 설정
     """
-    expr = formula.lower().replace(" ", "")
-    # 파싱
-    try:
-        left, mod = (
-            (expr.split("+", 1) + ["0"])[:2] if "+" in expr else (expr.split("-", 1) + ["0"])
-        )
-        sign = 1 if "+" in expr else (-1 if "-" in expr else 0)
-        n, m = left.split("d")
-        n, m = int(n), int(m)
-        modifier = int(mod) * (1 if sign == 1 else (-1 if sign == -1 else 0))
-    except Exception as e:
-        raise ValueError(f"Invalid formula: {formula}") from e
+    m = _DICE_RE.match(formula)
+    if not m:
+        raise ValueError(f"Invalid dice formula: {formula!r}")
 
-    if n <= 0 or m <= 0:
-        raise ValueError("N and M must be positive")
+    n = int(m.group(1))
+    sides = int(m.group(2))
+    mod = int(m.group(3).replace(" ", "")) if m.group(3) else 0
 
-    rolls = [random.randint(1, m) for _ in range(n)]
-    total = sum(rolls) + modifier
-    return RollResult(formula=formula, total=total, rolls=rolls)
+    detail: List[int] = [random.randint(1, sides) for _ in range(n)]
+    total = sum(detail) + mod
+
+    crit = False
+    fumble = False
+    if n == 1 and sides == 20:
+        crit = (detail[0] == 20)
+        fumble = (detail[0] == 1)
+
+    # rolls = detail 별칭(같은 리스트 객체)로 노출
+    return RollResult(
+        formula=formula,
+        total=total,
+        detail=detail,
+        rolls=detail,   # ← 테스트 호환을 위해 추가
+        crit=crit,
+        fumble=fumble,
+    )
