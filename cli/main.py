@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -44,6 +46,13 @@ def save_json(p: Path, data) -> None:
     p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _make_session_id(title: str) -> str:
+    """파일 키로 안전한 세션 ID를 생성 (예: CLI_MVP_Demo-20250817-085304)"""
+    base = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("_") or "session"
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{base}-{ts}"
+
+
 @click.group()
 def cli():
     """TRPG CLI (MVP) — 세션/전투/로그/내보내기"""
@@ -62,11 +71,16 @@ def session():
 def session_new(title):
     """새 세션 생성"""
     title = " ".join(title) if title else "Untitled"
+    sid = _make_session_id(title)
+    now = datetime.now().isoformat(timespec="seconds")
     data = {
+        "id": sid,
         "title": title,
         "status": "open",
+        "created_at": now,
     }
     save_json(session_path(), data)
+    LogManager(sid).append_system("session", {"action": "created", "title": title})
     click.echo(f"Created session: {title}")
 
 
@@ -101,6 +115,9 @@ def enc_start():
         "round": 1,
     }
     save_json(init_path(), init)
+    LogManager(s.get("id", s.get("title", "Session"))).append_system(
+        "encounter", {"action": "started", "round": 1}
+    )
     click.echo("Encounter started (round=1)")
 
 
@@ -130,9 +147,12 @@ def init_add(name, value):
     if init is None:
         raise click.UsageError("No encounter. Run: trpg enc start")
     init["order"].append({"name": name, "value": int(value), "delayed": False})
-    # value 내림차순, 입력 순 유지(안정 정렬)
-    init["order"].sort(key=lambda e: (-e["value"]))
+    init["order"].sort(key=lambda e: (-e["value"]))  # value 내림차순
     save_json(init_path(), init)
+    s = load_json(session_path(), {})
+    LogManager(s.get("id", s.get("title", "Session"))).append_system(
+        "init", {"action": "add", "name": name, "value": int(value)}
+    )
     click.echo(f"Added: {name} ({value})")
 
 
@@ -178,7 +198,6 @@ def init_delay(name):
         if e["name"] == name and not e.get("delayed"):
             e["delayed"] = True
             if i == idx:
-                # 현재 턴 보류 시 즉시 다음
                 init["index"] += 1
                 if init["index"] >= len(init["order"]):
                     init["index"] = 0
@@ -202,7 +221,7 @@ def init_return(name):
         if e["name"] == name and e.get("delayed"):
             e["delayed"] = False
             ent = order.pop(i)
-            order.append(ent)  # 꼬리로 이동
+            order.append(ent)
             if i < idx:
                 init["index"] -= 1
             init["index"] %= len(order)
@@ -225,10 +244,9 @@ def cmd_roll(formula, actor):
         raise click.UsageError("No session found. Run: trpg session new <title> first.")
     res = dice_roll(formula)
     click.echo(f"Roll {formula} -> total={res['total']} detail={res['detail']}")
-    # 로그 기록
-    lm = LogManager(s.get("title", "Session"))
-    lm.append_system(event="dice", data={"actor": actor, "formula": formula, **res})
-    # 내보내기는 별도 export 명령에서 수행
+    LogManager(s.get("id", s.get("title", "Session"))).append_system(
+        "dice", {"actor": actor, "formula": formula, **res}
+    )
 
 
 # -------------------------------------------------------------------
@@ -248,8 +266,7 @@ def log_add(text, scene):
     if not s:
         raise click.UsageError("No session found. Run: trpg session new <title> first.")
     text = " ".join(text)
-    lm = LogManager(s.get("title", "Session"))
-    lm.append_narrative(text=text, scene=scene)
+    LogManager(s.get("id", s.get("title", "Session"))).append_narrative(text=text, scene=scene)
     click.echo("Narrative logged")
 
 
@@ -263,9 +280,6 @@ def export_cmd(fmt):
     s = load_json(session_path(), {})
     if not s:
         raise click.UsageError("No session found. Run: trpg session new <title> first.")
-    lm = LogManager(s.get("title", "Session"))
-    # 세션 실행 중 누적된 LogManager 인스턴스가 아니라면?
-    # 간단화를 위해 이번 커맨드에서는 빈 로그도 파일 생성만 보장
-    # (실전에서는 상태 보관/주입이 필요)
-    path = lm.export(fmt)
+    sid = s.get("id", s.get("title", "Session"))
+    path = LogManager(sid).export(fmt, display_title=s.get("title", "Session"))
     click.echo(f"Exported -> {path}")
