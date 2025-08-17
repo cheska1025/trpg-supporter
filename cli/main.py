@@ -92,6 +92,13 @@ def session_close():
         raise click.UsageError("No session found. Run: trpg session new <title>")
     data["status"] = "closed"
     save_json(session_path(), data)
+    # 추가: system 로그
+    try:
+        LogManager(data.get("id", data.get("title", "Session"))).append_system(
+            "session", {"action": "closed"}
+        )
+    except Exception:
+        pass
     click.echo("Session closed")
 
 
@@ -124,9 +131,15 @@ def enc_start():
 @enc.command("end")
 def enc_end():
     """전투 종료"""
+    s = load_json(session_path(), {})
     p = init_path()
     if p.exists():
         p.unlink()
+    # 추가: system 로그
+    if s:
+        LogManager(s.get("id", s.get("title", "Session"))).append_system(
+            "encounter", {"action": "ended"}
+        )
     click.echo("Encounter ended")
 
 
@@ -183,6 +196,11 @@ def init_next():
         init["index"] = 0
         init["round"] += 1
     save_json(init_path(), init)
+    # 추가: system 로그
+    s = load_json(session_path(), {})
+    LogManager(s.get("id", s.get("title", "Session"))).append_system(
+        "init", {"action": "next", "index": init["index"], "round": init["round"]}
+    )
     click.echo(f"Turn -> index={init['index']} round={init['round']}")
 
 
@@ -203,6 +221,17 @@ def init_delay(name):
                     init["index"] = 0
                     init["round"] += 1
             save_json(init_path(), init)
+            # 추가: system 로그
+            s = load_json(session_path(), {})
+            LogManager(s.get("id", s.get("title", "Session"))).append_system(
+                "init",
+                {
+                    "action": "delay",
+                    "name": name,
+                    "index": init["index"],
+                    "round": init["round"],
+                },
+            )
             click.echo(f"Delayed: {name}")
             return
     click.echo(f"Not found or already delayed: {name}")
@@ -226,6 +255,17 @@ def init_return(name):
                 init["index"] -= 1
             init["index"] %= len(order)
             save_json(init_path(), init)
+            # 추가: system 로그
+            s = load_json(session_path(), {})
+            LogManager(s.get("id", s.get("title", "Session"))).append_system(
+                "init",
+                {
+                    "action": "return",
+                    "name": name,
+                    "index": init["index"],
+                    "round": init["round"],
+                },
+            )
             click.echo(f"Returned: {name}")
             return
     click.echo(f"Not found or not delayed: {name}")
