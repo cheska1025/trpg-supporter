@@ -1,0 +1,8 @@
+﻿site_name: TRPG Supporter
+theme:
+  name: material
+nav:
+  - 홈: index.md
+  - 빠른 시작: quickstart.md
+  - 명령 레퍼런스: cli-reference.md
+  - 데모: demo-cli-mvp.md
