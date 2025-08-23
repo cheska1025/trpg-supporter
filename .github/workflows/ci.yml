@@ -10,14 +10,11 @@ jobs:
   backend:
     runs-on: ubuntu-latest
     env:
-      # 테스트용 SQLite DB (레포 루트 절대경로)
       DATABASE_URL: sqlite+aiosqlite:////${{ github.workspace }}/test.db
-      # Alembic이 backend 패키지 임포트 가능하도록
       PYTHONPATH: ${{ github.workspace }}
     steps:
       - uses: actions/checkout@v4
 
-      # Python 3.12 고정
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -55,11 +52,12 @@ jobs:
           poetry install
           poetry show
 
-      # ✅ 테스트 DB에 마이그레이션 적용 (설정 파일 경로 명시)
       - name: Run Alembic migrations (test DB)
+        env:
+          DATABASE_URL: sqlite+aiosqlite:////${{ github.workspace }}/test.db
+          PYTHONPATH: ${{ github.workspace }}
         run: poetry run alembic -c backend/alembic.ini upgrade head
 
-      # pytest가 테스트를 하나도 못 찾으면(exit 5) → 성공 처리
       - name: Run backend tests (skip if none)
         run: |
           set -e
@@ -102,7 +100,6 @@ jobs:
     env:
       HOST: 127.0.0.1
       PORT: 8000
-      # E2E용 별도 DB (레포 루트 절대경로)
       DATABASE_URL: sqlite+aiosqlite:////${{ github.workspace }}/e2e.db
       PYTHONPATH: ${{ github.workspace }}
     steps:
@@ -161,8 +158,10 @@ jobs:
           poetry install
           poetry show
 
-      # ✅ E2E DB 마이그레이션 (서버 실행 전) - 설정 파일 경로 명시
       - name: Run Alembic migrations (e2e DB)
+        env:
+          DATABASE_URL: sqlite+aiosqlite:////${{ github.workspace }}/e2e.db
+          PYTHONPATH: ${{ github.workspace }}
         run: poetry run alembic -c backend/alembic.ini upgrade head
 
       - name: Run backend (background) and wait for health
