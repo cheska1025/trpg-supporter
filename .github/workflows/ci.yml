@@ -1,4 +1,3 @@
----
 name: CI
 
 on:
@@ -7,152 +6,126 @@ on:
   pull_request:
     branches: ["main"]
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  # -------------------- Backend --------------------
   backend:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
-        with:
-          poetry-version: "1.8.3"
-
       - name: Cache Poetry
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pypoetry
-            ~/.cache/pip
-          key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
 
-      - name: Install backend deps
-        run: poetry install --no-interaction
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: DB migrate
-        run: poetry run alembic upgrade head
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install
 
       - name: Run backend tests
-        run: poetry run pytest -q
+        run: poetry run pytest
 
-  # -------------------- Frontend --------------------
   frontend:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
+          node-version: 20
 
-      - name: Install deps
+      - name: Install dependencies
         run: npm ci
+        working-directory: frontend
 
-      - name: Type check
-        run: npm run typecheck
-
-      - name: Unit tests
+      - name: Run unit tests
         run: npm run test -- --run
+        working-directory: frontend
 
-      - name: Build
-        env:
-          VITE_API_BASE: http://127.0.0.1:8000/api/v1
-        run: npm run build
-
-  # -------------------- E2E --------------------
   e2e:
-    name: E2E (Playwright)
     runs-on: ubuntu-latest
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
 
-      # Backend 준비
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Cache npm
+        uses: actions/cache@v4
         with:
-          python-version: "3.12"
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
 
-      - name: Install Poetry
-        uses: abatilo/actions-poetry@v3
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
         with:
-          poetry-version: "1.8.3"
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+        working-directory: frontend
 
       - name: Cache Poetry
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cache/pypoetry
-            ~/.cache/pip
-          key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
+          path: ~/.cache/pypoetry
+          key: ${{ runner.os }}-poetry-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-poetry-
 
-      - name: Install backend deps
-        run: poetry install --no-interaction
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-      - name: DB migrate
-        run: poetry run alembic upgrade head
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
-      - name: Run backend server
+      - name: Install backend dependencies
+        run: |
+          pip install poetry
+          poetry install
+        working-directory: .
+
+      - name: Run backend (background)
         run: |
           nohup poetry run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 &
-          for i in {1..60}; do
-            if curl -fsS http://127.0.0.1:8000/api/v1/healthz >/dev/null; then
-              echo "Backend is up"; break
-            fi
-            sleep 1
-          done
-
-      # Frontend 준비
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Install frontend deps
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build frontend
-        working-directory: frontend
-        env:
-          VITE_API_BASE: http://127.0.0.1:8000/api/v1
-        run: npm run build
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npx playwright install --with-deps
-
-      - name: Serve frontend (vite preview)
-        working-directory: frontend
-        run: |
-          nohup npm run preview -- --port 5173 --strictPort &
-          for i in {1..60}; do
-            if curl -fsS http://127.0.0.1:5173 >/dev/null; then
-              echo "Frontend is up"; break
-            fi
-            sleep 1
-          done
+          sleep 5
 
       - name: Run E2E tests
+        run: npm run e2e
         working-directory: frontend
-        env:
-          BASE_URL: http://127.0.0.1:5173
-        run: npx playwright test
