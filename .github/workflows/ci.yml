@@ -1,25 +1,12 @@
+---
 name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: ["main"]
   pull_request:
-    branches: [ main ]
+    branches: ["main"]
 
-jobs:
-  backend:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4name: CI
-
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
-
-# 같은 브랜치에서 새 푸시가 오면 이전 워크플로 취소
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -27,11 +14,9 @@ concurrency:
 jobs:
   # -------------------- Backend --------------------
   backend:
-    name: Backend (pytest)
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,10 +36,10 @@ jobs:
             ~/.cache/pip
           key: poetry-${{ runner.os }}-${{ hashFiles('**/poetry.lock') }}
 
-      - name: Install deps
+      - name: Install backend deps
         run: poetry install --no-interaction
 
-      - name: Alembic migrate
+      - name: DB migrate
         run: poetry run alembic upgrade head
 
       - name: Run backend tests
@@ -62,11 +47,12 @@ jobs:
 
   # -------------------- Frontend --------------------
   frontend:
-    name: Frontend (vitest + build)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -76,19 +62,15 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install deps
-        working-directory: ./frontend
         run: npm ci
 
-      - name: Typecheck
-        working-directory: ./frontend
+      - name: Type check
         run: npm run typecheck
 
-      - name: Unit tests (Vitest)
-        working-directory: ./frontend
+      - name: Unit tests
         run: npm run test -- --run
 
       - name: Build
-        working-directory: ./frontend
         env:
           VITE_API_BASE: http://127.0.0.1:8000/api/v1
         run: npm run build
@@ -97,10 +79,9 @@ jobs:
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
-    needs: [backend, frontend]  # 앞 두 잡이 통과해야 실행
+    needs: [backend, frontend]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       # Backend 준비
       - name: Set up Python
@@ -130,7 +111,7 @@ jobs:
       - name: Run backend server
         run: |
           nohup poetry run uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 &
-          for i in {1..30}; do
+          for i in {1..60}; do
             if curl -fsS http://127.0.0.1:8000/api/v1/healthz >/dev/null; then
               echo "Backend is up"; break
             fi
@@ -146,24 +127,24 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
-        working-directory: ./frontend
+        working-directory: frontend
         run: npm ci
 
       - name: Build frontend
-        working-directory: ./frontend
+        working-directory: frontend
         env:
           VITE_API_BASE: http://127.0.0.1:8000/api/v1
         run: npm run build
 
       - name: Install Playwright browsers
-        working-directory: ./frontend
+        working-directory: frontend
         run: npx playwright install --with-deps
 
       - name: Serve frontend (vite preview)
-        working-directory: ./frontend
+        working-directory: frontend
         run: |
           nohup npm run preview -- --port 5173 --strictPort &
-          for i in {1..30}; do
+          for i in {1..60}; do
             if curl -fsS http://127.0.0.1:5173 >/dev/null; then
               echo "Frontend is up"; break
             fi
@@ -171,15 +152,7 @@ jobs:
           done
 
       - name: Run E2E tests
-        working-directory: ./frontend
+        working-directory: frontend
         env:
           BASE_URL: http://127.0.0.1:5173
         run: npx playwright test
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: frontend/playwright-report
-          if-no-files-found: ignore
