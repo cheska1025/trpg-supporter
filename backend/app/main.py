@@ -1,17 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.api.v1.health import router as health_router
-from backend.app.core.config import settings
-from backend.app.core.logging import setup_logging
+app = FastAPI(title="trpg-supporter")
 
-setup_logging()
-app = FastAPI(title=settings.APP_NAME)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(health_router, prefix=settings.API_V1_PREFIX)
+
+# (필요 시) 라우터 포함 예시
+# from backend.app.api.v1.characters import router as characters_router
+# from backend.app.api.v1.health import router as health_router
+# app.include_router(health_router, prefix="/api/v1")
+# app.include_router(characters_router, prefix="/api/v1")
