@@ -1,18 +1,29 @@
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(title="trpg-supporter")
 
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 필요 시 특정 도메인으로 제한
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# (필요 시) 라우터 포함 예시
+# API v1 Router
+router = APIRouter(prefix="/api/v1")
+
+
+@router.get("/healthz")
+async def healthz():
+    return {"ok": True}
+
+
+# (필요 시) 실제 엔드포인트 라우터 추가
 # from backend.app.api.v1.characters import router as characters_router
-# from backend.app.api.v1.health import router as health_router
-# app.include_router(health_router, prefix="/api/v1")
-# app.include_router(characters_router, prefix="/api/v1")
+# router.include_router(characters_router)
+
+# 최종 등록
+app.include_router(router)
