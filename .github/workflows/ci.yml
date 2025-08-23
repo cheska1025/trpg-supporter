@@ -15,7 +15,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12" # ✅ 3.12로 고정
 
       - name: Show Python/Poetry versions
         run: |
@@ -50,8 +50,18 @@ jobs:
           poetry install
           poetry show
 
+      # ✅ pytest 전에 마이그레이션으로 테이블 생성
+      - name: Run Alembic migrations (test DB)
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test.db"
+        run: |
+          rm -f test.db
+          poetry run alembic upgrade head
+
       # pytest가 테스트를 하나도 못 찾으면 exit code 5 -> 성공으로 처리
       - name: Run backend tests (skip if none)
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./test.db"
         run: |
           set -e
           poetry run pytest -q || rc=$?
@@ -117,7 +127,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12" # ✅ e2e도 동일 버전
 
       - name: Install Poetry
         run: |
@@ -146,10 +156,19 @@ jobs:
           poetry install
           poetry show
 
+      # ✅ 서버 기동 전에 e2e용 DB 마이그레이션
+      - name: Run Alembic migrations (e2e DB)
+        env:
+          DATABASE_URL: "sqlite+aiosqlite:///./e2e.db"
+        run: |
+          rm -f e2e.db
+          poetry run alembic upgrade head
+
       - name: Run backend (background) and wait for health
         env:
           HOST: 127.0.0.1
           PORT: 8000
+          DATABASE_URL: "sqlite+aiosqlite:///./e2e.db"
         run: |
           nohup poetry run uvicorn backend.app.main:app --host $HOST --port $PORT > backend.log 2>&1 &
           for i in {1..30}; do
