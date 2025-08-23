@@ -1,41 +1,22 @@
-const BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000/api/v1";
+const API_BASE =
+  (import.meta as any).env?.VITE_API_BASE?.replace(/\/$/, '') ?? '/api/v1'; // ← 기본값
 
-async function handle(res: Response) {
-  if (!res.ok) {
-    let msg = `HTTP ${res.status}`;
-    try {
-      const data = await res.json();
-      if (data?.detail) msg = typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail);
-    } catch {
-      // ignore
-    }
-    throw new Error(msg);
-  }
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
-}
+export { API_BASE };
 
 export const api = {
-  async get(path: string, params?: Record<string, any>) {
-    const q =
-      params &&
-      "?" +
-        Object.entries(params)
-          .filter(([, v]) => v !== undefined && v !== null && v !== "")
-          .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
-          .join("&");
-    const res = await fetch(`${BASE}${path}${q || ""}`, { credentials: "omit" });
-    return handle(res);
+  get: (path: string, opts?: RequestInit & { params?: Record<string, any> }) => {
+    const url = new URL(`${API_BASE}${path}`, window.location.origin);
+    if (opts?.params) {
+      Object.entries(opts.params).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) url.searchParams.set(k, String(v));
+      });
+    }
+    return fetch(url.toString(), { method: 'GET', ...opts });
   },
-  async post(path: string, body?: any) {
-    const res = await fetch(`${BASE}${path}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    return handle(res);
-  },
+  post: (path: string, opts?: RequestInit) =>
+    fetch(`${API_BASE}${path}`, { method: 'POST', ...opts }),
+  put: (path: string, opts?: RequestInit) =>
+    fetch(`${API_BASE}${path}`, { method: 'PUT', ...opts }),
+  delete: (path: string, opts?: RequestInit) =>
+    fetch(`${API_BASE}${path}`, { method: 'DELETE', ...opts }),
 };

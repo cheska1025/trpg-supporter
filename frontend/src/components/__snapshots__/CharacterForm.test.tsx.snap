@@ -1,0 +1,37 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`CharacterForm > renders 1`] = `
+<div>
+  <form
+    style="display: grid; gap: 8px; max-width: 320px;"
+  >
+    <label>
+      Name
+      <input
+        placeholder="e.g. Alice"
+        value=""
+      />
+    </label>
+    <label>
+      Class
+      <input
+        placeholder="e.g. Wizard"
+        value=""
+      />
+    </label>
+    <label>
+      Level (default 1)
+      <input
+        min="1"
+        type="number"
+        value="1"
+      />
+    </label>
+    <button
+      type="submit"
+    >
+      Create
+    </button>
+  </form>
+</div>
+`;

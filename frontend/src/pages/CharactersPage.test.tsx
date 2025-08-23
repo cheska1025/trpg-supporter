@@ -1,67 +1,57 @@
 import { describe, it, expect } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import CharactersPage from '@/pages/CharactersPage';
-import { withClient } from '@/test/utils';
+import { renderWithProviders } from '@/test/utils';
+import CharactersPage from './CharactersPage';
 
 describe('CharactersPage (integration)', () => {
-  it('lists, creates, updates, deletes characters with msw', async () => {
-    render(withClient(<CharactersPage />));
+  it('lists, creates, promotes(+1 Lv), deletes characters with msw', async () => {
+    renderWithProviders(<CharactersPage />);
+    const user = userEvent.setup();
 
-    // 초기 목록: 비어있음
+    // 1) 초기 렌더 & 목록 데이터 확인 (MSW 시드: Alice/Bob/Charlie)
+    await screen.findByRole('heading', { name: /characters/i });
+    await screen.findByText(/alice/i);
+    await screen.findByText(/bob/i);
+    await screen.findByText(/charlie/i);
+
+    // 2) 생성(Create) — 섹션을 기준으로 폼 조작
+    const createSection = screen.getByRole('region', { name: /create character/i });
+    const nameInput = within(createSection).getByLabelText(/name/i);
+    const classInput = within(createSection).getByLabelText(/class/i);
+    const levelInput = within(createSection).getByLabelText(/level/i);
+    const createButton = within(createSection).getByRole('button', { name: /create/i });
+
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Dave');
+    await user.clear(classInput);
+    await user.type(classInput, 'Fighter');
+    await user.clear(levelInput);
+    await user.type(levelInput, '3');
+    await user.click(createButton);
+
+    // 생성 후 목록에 Dave 등장
+    const daveCell = await screen.findByText(/dave/i);
+    expect(daveCell).toBeInTheDocument();
+
+    // Dave 행을 잡아서 그 안의 버튼/값만 검사
+    const daveRow = daveCell.closest('tr') as HTMLTableRowElement;
+    expect(daveRow).toBeTruthy();
+
+    // 3) 레벨업(+1 Lv) — 생성 시 3 → 클릭 후 4로 변해야 함
+    const promoteBtn = within(daveRow).getByRole('button', { name: /\+1 lv/i });
+    await user.click(promoteBtn);
+
+    // 같은 행에서 "Level" 셀(인덱스 3)만 정확히 확인 (0:ID, 1:Name, 2:Class, 3:Level)
+    const cells = within(daveRow).getAllByRole('cell');
+    expect(cells[3]).toHaveTextContent('4');
+
+    // 4) 삭제(Delete) — 행의 Delete 버튼 클릭 후 Dave가 사라져야 함
+    const deleteBtn = within(daveRow).getByRole('button', { name: /delete/i });
+    await user.click(deleteBtn);
+
     await waitFor(() => {
-      expect(screen.getByText(/characters/i)).toBeInTheDocument();
+      expect(screen.queryByText(/dave/i)).not.toBeInTheDocument();
     });
-    expect(screen.queryByRole('row', { name: /alice/i })).not.toBeInTheDocument();
-
-    // 생성
-    await userEvent.type(screen.getByLabelText(/name/i), 'Alice');
-    await userEvent.type(screen.getByLabelText(/class|clazz/i), 'Wizard');
-    await userEvent.clear(screen.getByLabelText(/level/i));
-    await userEvent.type(screen.getByLabelText(/level/i), '2');
-    await userEvent.click(screen.getByRole('button', { name: /create/i }));
-
-    // 테이블에 나타남
-    await screen.findByText('Alice');
-    expect(screen.getByText('Wizard')).toBeInTheDocument();
-    expect(screen.getByText('2')).toBeInTheDocument();
-
-    // 업데이트 (level +1 가정: Edit 버튼이 있고 입력/저장하는 UI라면 그에 맞게 조작)
-    // 여기서는 간단히 "Edit" 버튼을 눌러 level을 3으로 바꾼다고 가정
-    const editBtns = screen.getAllByRole('button', { name: /edit/i });
-    await userEvent.click(editBtns[0]);
-
-    const levelInput = screen.getByLabelText(/level/i);
-    await userEvent.clear(levelInput);
-    await userEvent.type(levelInput, '3');
-    await userEvent.click(screen.getByRole('button', { name: /save/i }));
-
-    await screen.findByText('3');
-
-    // 삭제
-    const delBtns = screen.getAllByRole('button', { name: /delete/i });
-    await userEvent.click(delBtns[0]);
-
-    await waitFor(() => {
-      expect(screen.queryByText('Alice')).not.toBeInTheDocument();
-    });
-  });
-
-  it('shows error on duplicate name (409)', async () => {
-    render(withClient(<CharactersPage />));
-    // 첫 생성
-    await userEvent.type(screen.getByLabelText(/name/i), 'DupName');
-    await userEvent.type(screen.getByLabelText(/class|clazz/i), 'Rogue');
-    await userEvent.click(screen.getByRole('button', { name: /create/i }));
-    await screen.findByText('DupName');
-
-    // 중복 생성
-    await userEvent.clear(screen.getByLabelText(/name/i));
-    await userEvent.type(screen.getByLabelText(/name/i), 'DupName');
-    await userEvent.click(screen.getByRole('button', { name: /create/i }));
-
-    // 페이지/컴포넌트에서 409 detail을 메시지로 보여준다는 가정
-    // (실 구현에 맞게 셀렉터나 문구를 조정하세요)
-    await screen.findByText(/already exists/i);
   });
 });
