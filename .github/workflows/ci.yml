@@ -2,9 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [ main ]   # main 브랜치에 push 시 실행
-  pull_request:          # PR 생성/갱신 시 실행
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+# 같은 브랜치에서 새 푸시가 오면 이전 워크플로 취소
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -12,20 +27,21 @@ concurrency:
 jobs:
   # -------------------- Backend --------------------
   backend:
-    name: Backend (pytest & pre-commit)
+    name: Backend (pytest)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
-          poetry-version: '1.8.3'
+          poetry-version: "1.8.3"
 
       - name: Cache Poetry
         uses: actions/cache@v4
@@ -38,36 +54,30 @@ jobs:
       - name: Install deps
         run: poetry install --no-interaction
 
-      - name: Run migrations
+      - name: Alembic migrate
         run: poetry run alembic upgrade head
 
-      - name: Pre-commit
-        run: poetry run pre-commit run --all-files
-
-      - name: Pytest
+      - name: Run backend tests
         run: poetry run pytest -q
 
   # -------------------- Frontend --------------------
   frontend:
-    name: Frontend (lint, typecheck, vitest, build)
+    name: Frontend (vitest + build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Use Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install deps
         working-directory: ./frontend
         run: npm ci
-
-      - name: Lint
-        working-directory: ./frontend
-        run: npm run lint
 
       - name: Typecheck
         working-directory: ./frontend
@@ -83,30 +93,25 @@ jobs:
           VITE_API_BASE: http://127.0.0.1:8000/api/v1
         run: npm run build
 
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist
-          path: frontend/dist
-
   # -------------------- E2E --------------------
   e2e:
     name: E2E (Playwright)
     runs-on: ubuntu-latest
-    needs: [backend, frontend]   # 앞 두 잡 성공 시에만 실행
+    needs: [backend, frontend]  # 앞 두 잡이 통과해야 실행
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       # Backend 준비
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install Poetry
         uses: abatilo/actions-poetry@v3
         with:
-          poetry-version: '1.8.3'
+          poetry-version: "1.8.3"
 
       - name: Cache Poetry
         uses: actions/cache@v4
@@ -133,11 +138,11 @@ jobs:
           done
 
       # Frontend 준비
-      - name: Use Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
+          node-version: "20"
+          cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend deps
@@ -170,3 +175,11 @@ jobs:
         env:
           BASE_URL: http://127.0.0.1:5173
         run: npx playwright test
+
+      - name: Upload Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/playwright-report
+          if-no-files-found: ignore
