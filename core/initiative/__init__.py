@@ -1,136 +1,102 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from types import SimpleNamespace
 
-__all__ = ["InitiativeTracker", "Tracker"]
+__all__ = ["InitiativeTracker", "Tracker", "Actor"]
 
 
-@dataclass
-class _Entry:
-    """
-    내부 관리용 엔트리.
-    - value: 이니시 값(높을수록 먼저)
-    - seq: 입력 순서(동점 시 안정 정렬 보장)
-    - delayed: 보류 상태
-    """
-
+@dataclass(eq=True, frozen=False)
+class Actor:
     name: str
-    value: int
-    seq: int
+    init: int
     delayed: bool = False
 
 
 class InitiativeTracker:
     """
-    이니시 티브 트래커(테스트가 기대하는 최소 인터페이스)
-
-    공개 메서드
-    - add(name, value): 엔트리 추가
-    - start_encounter(): 전투 시작(정렬/라운드 초기화)
-    - current() -> 객체(속성 name, value)
-    - next_turn(): 턴 진행 (라운드 증가 포함)
-    - delay(name): 보류 표시 (현재 턴 보류 시 즉시 다음으로 진행)
-    - return_from_delay(name): 같은 라운드 '꼬리'로 재진입
-    프로퍼티
-    - order: 현 정렬 순서 리스트(각 항목 name/value/delayed 제공)
-    - round: 현재 라운드(정수)
+    간단한 이니시 추적기:
+    - add(name, init): 참가자 추가
+    - start_encounter(): 정렬하고 라운드 1 시작
+    - current: 현재 차례의 Actor (항상 Actor 반환)
+    - order: 현재 라운드의 순서(리스트) 프로퍼티
+    - next_turn(): 다음 차례로 진행 (리턴값: 진행 후의 current)
+    - next(): 테스트 호환용 별칭 (next_turn() 래핑)
+    - delay(name): 해당 액터를 지연 상태로 표시하고 턴 순서의 맨 뒤로 보냄
+    - return_from_delay(name): 지연 해제 (현 순서 유지)
+    - round: 현재 라운드 번호 프로퍼티
     """
 
     def __init__(self) -> None:
-        self._entries: list[_Entry] = []
-        self._seq = 0  # 동점 안정 정렬을 위한 입력 순서
-        self._index = 0  # 현재 턴 인덱스
-        self.round = 0  # 0 = 미시작, 1부터 시작
-        self._started = False
+        self._actors: list[Actor] = []
+        self._idx: int = -1  # current index
+        self._round: int = 0
 
-    # ---------- 등록/정렬 ----------
-    def add(self, name: str, value: int) -> None:
-        """엔트리 추가 (아직 시작 전이라면 단순 추가, 시작 후에도 추가 가능)"""
-        self._entries.append(_Entry(name=name, value=int(value), seq=self._seq, delayed=False))
-        self._seq += 1
-        # 전투 시작 이전에는 정렬을 미뤄도 되지만, 시작 이후 추가가 있을 수 있으므로 정렬 유지
-        if self._started:
-            self._stable_sort()
+    # ---- 등록/시작 ---------------------------------------------------------
+    def add(self, name: str, init: int) -> None:
+        self._actors.append(Actor(name=name, init=init))
 
     def start_encounter(self) -> None:
-        """전투 시작: 안정 정렬 후 라운드/인덱스 초기화"""
-        self._stable_sort()
-        self._index = 0
-        self.round = 1 if self._entries else 0
-        self._started = True
+        # 높은 이니시어티브 우선, 동률은 이름 사전순
+        self._actors.sort(key=lambda a: (-a.init, a.name))
+        self._round = 1 if self._actors else 0
+        self._idx = 0 if self._actors else -1
 
-    def _stable_sort(self) -> None:
-        # value 내림차순, seq 오름차순(입력 순서)으로 안정 정렬
-        self._entries.sort(key=lambda e: (-e.value, e.seq))
-
-    # ---------- 조회 ----------
-    def current(self):
-        """현재 턴의 엔트리 반환. 없으면 None."""
-        if not self._entries:
-            return None
-        e = self._entries[self._index]
-        return SimpleNamespace(name=e.name, value=e.value, delayed=e.delayed)
+    # ---- 조회 프로퍼티 ------------------------------------------------------
+    @property
+    def round(self) -> int:
+        return self._round
 
     @property
-    def order(self):
-        """현재 정렬 순서를 반환(테스트에서 리스트 확인용)"""
-        return [
-            SimpleNamespace(name=e.name, value=e.value, delayed=e.delayed) for e in self._entries
-        ]
+    def order(self) -> list[Actor]:
+        # 외부에서 변경 못 하도록 복사 반환
+        return list(self._actors)
 
-    # ---------- 턴/라운드 ----------
-    def next_turn(self) -> None:
-        """다음 턴으로 진행. 라운드 경계를 넘으면 round + 1"""
-        if not self._started or not self._entries:
-            return
-        self._index += 1
-        if self._index >= len(self._entries):
-            self._index = 0
-            self.round += 1
+    def current(self) -> Actor:
+        if not self._actors or self._idx < 0:
+            # 테스트 기대치에 맞게 Optional이 아닌 Actor를 반환해야 하므로
+            # 빈 상태는 논리 오류로 처리
+            raise RuntimeError("No active actor; call start_encounter() after adding actors.")
+        return self._actors[self._idx]
 
-    # ---------- 보류/재진입 ----------
-    def delay(self, name: str) -> None:
-        """
-        주어진 이름을 보류 상태로 표시.
-        현재 턴의 엔트리를 보류하면 즉시 다음 턴으로 진행한다.
-        """
-        for i, e in enumerate(self._entries):
-            if e.name == name and not e.delayed:
-                e.delayed = True
-                # 현재 턴 보류 시 다음 턴으로
-                if i == self._index:
-                    self.next_turn()
-                return
-
-    def return_from_delay(self, name: str) -> None:
-        """
-        보류된 엔트리를 같은 라운드의 '꼬리'에 재배치하고 보류 해제.
-        (정책: 재진입은 동일 라운드 꼬리로. 동점 안정 정렬 유지)
-        """
-        for i, e in enumerate(self._entries):
-            if e.name == name and e.delayed:
-                # 꺼내서 꼬리로 보냄(새로운 seq를 부여)
-                removed = self._entries.pop(i)
-                if i < self._index:
-                    # 현재 인덱스 앞쪽이 빠졌다면 보정
-                    self._index -= 1
-                removed.delayed = False
-                removed.seq = self._seq
-                self._seq += 1
-                self._entries.append(removed)
-                # 정렬 정책 유지(꼬리로 보냈지만 value 기준 정렬 필요 시 반영)
-                # 여기서는 '같은 라운드 꼬리' 정책을 위해 정렬 대신 위치 고정
-                # 다만, value 기반 전역 정렬이 필요하다면 아래 주석을 해제:
-                # self._stable_sort()
-                # self._index %= len(self._entries)
-                return
-
-    def next(self):
-        """Back-compat alias for next_turn(). 테스트에서 Tracker.next()를 호출하는 경우 대응."""
-        self.next_turn()
+    # ---- 진행/지연 ----------------------------------------------------------
+    def next_turn(self) -> Actor:
+        if not self._actors:
+            raise RuntimeError("No actors to advance.")
+        self._idx += 1
+        if self._idx >= len(self._actors):
+            self._idx = 0
+            self._round += 1
         return self.current()
 
+    # 테스트 호환용 별칭
+    def next(self) -> Actor:
+        return self.next_turn()
 
-# 하위 호환: 기존 이름 Tracker도 그대로 쓸 수 있도록 별칭 제공
+    def delay(self, name: str) -> None:
+        # name으로 액터 찾기
+        idx = next((i for i, a in enumerate(self._actors) if a.name == name), None)
+        if idx is None:
+            raise ValueError(f"Actor not found: {name}")
+
+        actor = self._actors[idx]
+        actor.delayed = True  # 플래그 설정
+
+        # 현재 인덱스 이전의 항목이 빠지면 인덱스 보정
+        remove_affects_current = idx <= self._idx
+        # 순서 맨 뒤로 보냄
+        self._actors.pop(idx)
+        self._actors.append(actor)
+
+        if remove_affects_current:
+            # 현재 포인터가 한 칸 앞당겨진 효과이므로 보정
+            self._idx = max(0, self._idx - 1)
+
+    def return_from_delay(self, name: str) -> None:
+        actor = next((a for a in self._actors if a.name == name), None)
+        if actor is None:
+            raise ValueError(f"Actor not found: {name}")
+        actor.delayed = False
+
+
+# 테스트에서 Tracker 심볼을 임포트하므로 별칭 제공
 Tracker = InitiativeTracker

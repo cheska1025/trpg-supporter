@@ -1,9 +1,12 @@
 import json
+from pathlib import Path
+
+import pytest
 
 from core.log import LogManager, append_markdown
 
 
-def test_append_and_export_md_json(tmp_path, monkeypatch):
+def test_append_and_export_md_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TRPG_HOME", str(tmp_path))
     lm = LogManager(session_id="S1")
 
@@ -13,8 +16,7 @@ def test_append_and_export_md_json(tmp_path, monkeypatch):
     out_md = lm.export("md")
     out_json = lm.export("json")
 
-    # 경로 또는 반환 텍스트 확인 (구현에 따라 choose)
-    # 1) 경로 반환 구현일 경우:
+    # 경로 또는 반환 텍스트 확인
     if hasattr(out_md, "endswith"):
         assert str(out_md).endswith(".md")
     else:
@@ -22,14 +24,14 @@ def test_append_and_export_md_json(tmp_path, monkeypatch):
 
     if hasattr(out_json, "endswith"):
         assert str(out_json).endswith(".json")
-        data = json.loads(open(out_json, encoding="utf-8").read())
+        data = json.loads(Path(out_json).read_text(encoding="utf-8"))
         assert any(item.get("type") == "system" for item in data)
     else:
         data = json.loads(out_json)
         assert any(item.get("type") == "system" for item in data)
 
 
-def test_append_markdown(tmp_path):
+def test_append_markdown(tmp_path: Path) -> None:
     p = tmp_path / "exports" / "demo.md"
     append_markdown(p, "# title")
     append_markdown(p, "line")

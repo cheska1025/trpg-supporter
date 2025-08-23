@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from backend.app.core.config import settings
 
@@ -15,13 +16,13 @@ SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False, futu
 
 
 @contextmanager
-def session_scope():
+def session_scope() -> Iterator[Session]:
     """
     SQLAlchemy 세션 컨텍스트 매니저.
     with session_scope() as s:
         ... DB 작업 ...
     """
-    s = SessionLocal()
+    s: Session = SessionLocal()
     try:
         yield s
         s.commit()

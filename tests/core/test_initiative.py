@@ -1,7 +1,7 @@
 from core.initiative import InitiativeTracker
 
 
-def test_round_progress_and_stable_ties():
+def test_round_progress_and_stable_ties() -> None:
     t = InitiativeTracker()
     t.add("Rogue", 15)
     t.add("GoblinA", 12)
@@ -23,7 +23,7 @@ def test_round_progress_and_stable_ties():
     assert t.current().name == "Rogue"
 
 
-def test_delay_and_reentry_in_same_round():
+def test_delay_and_reentry_in_same_round() -> None:
     t = InitiativeTracker()
     t.add("Rogue", 18)
     t.add("Mage", 14)
@@ -40,7 +40,7 @@ def test_delay_and_reentry_in_same_round():
     assert t.current().name == "Rogue"  # 재진입 규칙 확인
 
 
-def test_reentry_ordering_policy():
+def test_reentry_ordering_policy() -> None:
     t = InitiativeTracker()
     t.add("A", 20)
     t.add("B", 15)

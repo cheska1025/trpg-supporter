@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
 from backend.app.core.db import session_scope
 from backend.app.models import LogEntry
@@ -37,18 +37,21 @@ def _now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _load_json(path: Path) -> list[dict]:
-    """UTF-8/BOM 여부와 상관없이 JSON을 로드. 없거나 파싱 실패 시 []"""
+def _load_json(path: Path) -> list[dict[str, Any]]:
+    """
+    UTF-8/BOM 여부와 상관없이 JSON을 로드.
+    없거나 파싱 실패 시 [] 반환.
+    """
     if not path.exists():
         return []
     try:
-        # BOM 유무에 무관한 디코딩을 위해 utf-8-sig
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        raw: Any = json.loads(path.read_text(encoding="utf-8-sig"))
+        return cast(list[dict[str, Any]], raw)
     except Exception:
         return []
 
 
-def _save_json(path: Path, data: list[dict]) -> None:
+def _save_json(path: Path, data: list[dict[str, Any]]) -> None:
     """Windows PowerShell `type`에서도 한글이 깨지지 않도록 UTF-8 with BOM으로 저장."""
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8-sig")
 
@@ -86,7 +89,7 @@ def _save_md(path: Path, items: Iterable[LogItem]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8-sig")
 
 
-def _same_second_key(item: LogItem) -> tuple[str, str, str]:
+def _same_second_key(item: LogItem) -> tuple[Channel, str, str]:
     """중복 판정을 위한 키: (channel, text, timestamp[:19])"""
     return (item.channel, item.text, item.timestamp[:19])
 
@@ -124,9 +127,9 @@ def append_session_log(*, session_id: int, channel: Channel, text: str) -> dict[
     items_raw = _load_json(json_path)
     items: list[LogItem] = [
         LogItem(
-            channel=(it.get("channel") or "system"),  # 안전 기본값
-            text=(it.get("text") or ""),
-            timestamp=(it.get("timestamp") or ""),
+            channel=cast(Channel, (it.get("channel") or "system")),
+            text=str(it.get("text") or ""),
+            timestamp=str(it.get("timestamp") or ""),
         )
         for it in items_raw
     ]
@@ -154,9 +157,9 @@ def export_session_log(*, session_id: int) -> dict[str, str]:
     items_raw = _load_json(json_path)
     items: list[LogItem] = [
         LogItem(
-            channel=(it.get("channel") or "system"),
-            text=(it.get("text") or ""),
-            timestamp=(it.get("timestamp") or ""),
+            channel=cast(Channel, (it.get("channel") or "system")),
+            text=str(it.get("text") or ""),
+            timestamp=str(it.get("timestamp") or ""),
         )
         for it in items_raw
     ]
@@ -176,7 +179,7 @@ def list_session_log(
     session_id: int,
     channel: Channel | None = None,
     limit: int | None = None,
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """
     JSON 기반 조회 유틸.
     - channel: "system" / "narrative" 로 필터
@@ -184,19 +187,20 @@ def list_session_log(
     """
     _, json_path = _paths(session_id)
     items_raw = _load_json(json_path)
-    # 정제
-    rows: list[dict] = []
+
+    rows: list[dict[str, str]] = []
     for it in items_raw:
-        ch = it.get("channel") or "system"
+        ch = str(it.get("channel") or "system")
         if channel and ch != channel:
             continue
         rows.append(
             {
-                "timestamp": (it.get("timestamp") or ""),
+                "timestamp": str(it.get("timestamp") or ""),
                 "channel": ch,
-                "text": (it.get("text") or ""),
+                "text": str(it.get("text") or ""),
             }
         )
+
     if limit and limit > 0:
         rows = rows[:limit]
     return rows

@@ -1,325 +1,187 @@
-# cli/main.py
 from __future__ import annotations
 
-import json
-import os
-import re
-from datetime import datetime
-from pathlib import Path
+import asyncio
+import inspect
+from typing import Any, Callable, Mapping, Sequence
 
 import click
+from rich import print
 
-from core.dice import roll as dice_roll
-from core.log import LogManager  # append_markdown은 호환용으로만 임포트
+# 세션은 "필요한 경우에만" 주입
+try:
+    from backend.app.db.session import AsyncSessionLocal  # type: ignore[import]
+except Exception:  # pragma: no cover
+    AsyncSessionLocal = None  # type: ignore[assignment]
 
-APP_DIRNAME = ""  # 비워두면 바로 TRPG_HOME 루트 사용
-SESSION_FILE = "session.json"
-INIT_FILE = "initiative.json"
-
-
-def trpg_home() -> Path:
-    base = os.getenv("TRPG_HOME")
-    if base:
-        root = Path(base)
-    else:
-        root = Path.home() / ".trpg"
-    d = root / APP_DIRNAME if APP_DIRNAME else root
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+# ---- 서비스 함수 동적 로드 (이름 변화에 내성) ------------------------------
+# create/add
+_CREATE_FN_NAMES: Sequence[str] = ("create_character", "add_character", "create", "add")
+# list/get
+_LIST_FN_NAMES: Sequence[str] = ("list_characters", "get_characters", "list", "get_all")
 
 
-def session_path() -> Path:
-    return trpg_home() / SESSION_FILE
+def _import_service_func(candidates: Sequence[str]) -> Callable[..., Any]:
+    """
+    backend.app.services.characters 모듈에서 후보 이름 중 첫 번째를 찾아 반환.
+    mypy가 모듈 속성 유무를 정적으로 확정할 수 없으므로 Any로 취급한다.
+    """
+    from importlib import import_module
+
+    mod = import_module("backend.app.services.characters")
+    for name in candidates:
+        if hasattr(mod, name):
+            return getattr(mod, name)
+    # 최종 실패 시 AttributeError
+    raise AttributeError(
+        f"None of {', '.join(candidates)} found in backend.app.services.characters"
+    )
 
 
-def init_path() -> Path:
-    return trpg_home() / INIT_FILE
-
-
-def load_json(p: Path, default):
-    if p.exists():
-        return json.loads(p.read_text(encoding="utf-8"))
-    return default
-
-
-def save_json(p: Path, data) -> None:
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def _make_session_id(title: str) -> str:
-    """파일 키로 안전한 세션 ID를 생성 (예: CLI_MVP_Demo-20250817-085304)"""
-    base = re.sub(r"[^A-Za-z0-9._-]+", "_", title).strip("_") or "session"
-    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{base}-{ts}"
-
-
-@click.group()
-def cli():
-    """TRPG CLI (MVP) — 세션/전투/로그/내보내기"""
-
-
-# -------------------------------------------------------------------
-# session
-# -------------------------------------------------------------------
-@cli.group()
-def session():
-    """세션 관리"""
-
-
-@session.command("new")
-@click.argument("title", nargs=-1)
-def session_new(title):
-    """새 세션 생성"""
-    title = " ".join(title) if title else "Untitled"
-    sid = _make_session_id(title)
-    now = datetime.now().isoformat(timespec="seconds")
-    data = {
-        "id": sid,
-        "title": title,
-        "status": "open",
-        "created_at": now,
-    }
-    save_json(session_path(), data)
-    LogManager(sid).append_system("session", {"action": "created", "title": title})
-    click.echo(f"Created session: {title}")
-
-
-@session.command("close")
-def session_close():
-    """세션 종료"""
-    data = load_json(session_path(), {})
-    if not data:
-        raise click.UsageError("No session found. Run: trpg session new <title>")
-    data["status"] = "closed"
-    save_json(session_path(), data)
-    # 추가: system 로그
+# 후에 실행 시점에서 실패하면 명확한 에러가 나도록, 여기서 즉시 해석은 하지 않는다.
+# (명령 실행 시에 import 시도)
+def _needs_db_param(func: Callable[..., Any]) -> bool:
+    """
+    함수 시그니처를 보고 DB 세션 인자를 요구하는지 판단.
+    이름 기준: 'db', 'session', 'async_session' 중 하나가 존재하면 필요하다고 간주.
+    타입 어노테이션이 AsyncSession이면 역시 필요로 간주.
+    """
     try:
-        LogManager(data.get("id", data.get("title", "Session"))).append_system(
-            "session", {"action": "closed"}
-        )
-    except Exception:
-        pass
-    click.echo("Session closed")
+        sig = inspect.signature(func)
+    except (TypeError, ValueError):
+        return False
+
+    for p in sig.parameters.values():
+        if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
+            name = p.name.lower()
+            if name in {"db", "session", "async_session"}:
+                return True
+            # 타입 힌트 기반(선택적): 모듈 문자열에 'sqlalchemy'가 보이면 True로 본다
+            ann = str(p.annotation)
+            if "AsyncSession" in ann or "sqlalchemy" in ann.lower():
+                return True
+    return False
 
 
-# -------------------------------------------------------------------
-# enc (encounter)
-# -------------------------------------------------------------------
-@cli.group()
-def enc():
-    """전투 관리 (Encounter)"""
+async def _call_maybe_async(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    """코루틴 함수면 await, 동기 함수면 thread에서 실행."""
+    if inspect.iscoroutinefunction(func):
+        return await func(*args, **kwargs)
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
-@enc.command("start")
-def enc_start():
-    """전투 시작 (이니시 초기화)"""
-    s = load_json(session_path(), {})
-    if not s:
-        raise click.UsageError("No session found. Run: trpg session new <title> first.")
-    init = {
-        "order": [],  # [{name, value, delayed}]
-        "index": 0,
-        "round": 1,
-    }
-    save_json(init_path(), init)
-    LogManager(s.get("id", s.get("title", "Session"))).append_system(
-        "encounter", {"action": "started", "round": 1}
-    )
-    click.echo("Encounter started (round=1)")
+def _filter_kwargs_for_func(
+    func: Callable[..., Any], raw_kwargs: Mapping[str, Any]
+) -> dict[str, Any]:
+    """
+    함수 시그니처에 존재하는 파라미터만 추려서 전달한다.
+    (예: 서비스 함수가 name/clazz만 받고 level을 받지 않는 경우 대비)
+    """
+    try:
+        sig = inspect.signature(func)
+        allowed = set(sig.parameters.keys())
+        return {k: v for k, v in raw_kwargs.items() if k in allowed}
+    except (TypeError, ValueError):
+        # 시그니처를 못 읽으면 그대로 전달(대부분 동작)
+        return dict(raw_kwargs)
 
 
-@enc.command("end")
-def enc_end():
-    """전투 종료"""
-    s = load_json(session_path(), {})
-    p = init_path()
-    if p.exists():
-        p.unlink()
-    # 추가: system 로그
-    if s:
-        LogManager(s.get("id", s.get("title", "Session"))).append_system(
-            "encounter", {"action": "ended"}
-        )
-    click.echo("Encounter ended")
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+cli = click.Group(name="trpg")
 
 
-# -------------------------------------------------------------------
-# init (initiative)
-# -------------------------------------------------------------------
-@cli.group()
-def init():
-    """이니시 관리"""
-
-
-@init.command("add")
+@cli.command("add")
 @click.argument("name")
-@click.argument("value", type=int)
-def init_add(name, value):
-    """이니시에 참가자 추가"""
-    init = load_json(init_path(), None)
-    if init is None:
-        raise click.UsageError("No encounter. Run: trpg enc start")
-    init["order"].append({"name": name, "value": int(value), "delayed": False})
-    init["order"].sort(key=lambda e: (-e["value"]))  # value 내림차순
-    save_json(init_path(), init)
-    s = load_json(session_path(), {})
-    LogManager(s.get("id", s.get("title", "Session"))).append_system(
-        "init", {"action": "add", "name": name, "value": int(value)}
-    )
-    click.echo(f"Added: {name} ({value})")
+@click.argument("clazz")
+@click.option("--level", default=1, type=int, show_default=True)
+def add_cmd(name: str, clazz: str, level: int) -> None:
+    """Add a new character (서비스 함수 이름/시그니처에 자동 적응)."""
+
+    async def _run() -> None:
+        # 1) 서비스 함수 로드
+        create_fn = _import_service_func(_CREATE_FN_NAMES)
+
+        # 2) 인자 정리
+        payload = _filter_kwargs_for_func(create_fn, {"name": name, "clazz": clazz, "level": level})
+
+        # 3) 세션 필요 여부에 따라 분기
+        if _needs_db_param(create_fn) and AsyncSessionLocal is not None:
+            async with AsyncSessionLocal() as db:  # type: ignore[misc]
+                result = await _call_maybe_async(create_fn, db, **payload)
+        else:
+            result = await _call_maybe_async(create_fn, **payload)
+
+        # 4) 출력 정규화
+        if hasattr(result, "__dict__"):
+            data = result.__dict__.copy()
+            data.pop("_sa_instance_state", None)  # SQLAlchemy 객체 대비
+            print(data)
+        elif isinstance(result, dict):
+            print(result)
+        else:
+            print({"result": result})
+
+    asyncio.run(_run())
 
 
-@init.command("list")
-def init_list():
-    """현재 이니시 순서 출력"""
-    init = load_json(init_path(), None)
-    if init is None:
-        raise click.UsageError("No encounter. Run: trpg enc start")
-    for i, e in enumerate(init["order"], 1):
-        mark = "*" if i - 1 == init["index"] else " "
-        dl = "(D)" if e.get("delayed") else ""
-        click.echo(f"{mark} {e['name']} {e['value']} {dl}")
-    click.echo(f"round={init['round']} index={init['index']}")
+@cli.command("ls")
+def ls_cmd() -> None:
+    """List characters (서비스 함수 이름/시그니처/동기·비동기에 자동 적응)."""
+
+    async def _run() -> None:
+        list_fn = _import_service_func(_LIST_FN_NAMES)
+
+        if _needs_db_param(list_fn) and AsyncSessionLocal is not None:
+            async with AsyncSessionLocal() as db:  # type: ignore[misc]
+                rows = await _call_maybe_async(list_fn, db)
+        else:
+            rows = await _call_maybe_async(list_fn)
+
+        # rows 형식: list[ORM], list[dict], dict with 'items', etc. → 최대한 보편 처리
+        out: list[dict[str, Any]] = []
+        if isinstance(rows, Sequence) and not isinstance(rows, (str, bytes, dict)):
+            for r in rows:
+                if hasattr(r, "__dict__"):
+                    d = r.__dict__.copy()
+                    d.pop("_sa_instance_state", None)
+                    out.append(d)
+                elif isinstance(r, Mapping):
+                    out.append(dict(r))
+                else:
+                    out.append({"value": r})
+        elif isinstance(rows, Mapping):
+            # 혹시 {"items": [...]} 형태인 경우
+            items = rows.get("items")
+            if isinstance(items, Sequence):
+                for r in items:
+                    if hasattr(r, "__dict__"):
+                        d = r.__dict__.copy()
+                        d.pop("_sa_instance_state", None)
+                        out.append(d)
+                    elif isinstance(r, Mapping):
+                        out.append(dict(r))
+                    else:
+                        out.append({"value": r})
+            else:
+                out.append(dict(rows))
+        else:
+            out.append({"value": rows})
+
+        # 가독성 최소 필드만 출력 시도
+        simplified = []
+        for d in out:
+            if all(k in d for k in ("id", "name")):
+                simplified.append({"id": d.get("id"), "name": d.get("name")})
+            else:
+                simplified.append(d)
+        print(simplified)
+
+    asyncio.run(_run())
 
 
-@init.command("next")
-def init_next():
-    """다음 턴으로 진행 (라운드 증가 포함)"""
-    init = load_json(init_path(), None)
-    if init is None:
-        raise click.UsageError("No encounter. Run: trpg enc start")
-    if not init["order"]:
-        click.echo("No entries")
-        return
-    init["index"] += 1
-    if init["index"] >= len(init["order"]):
-        init["index"] = 0
-        init["round"] += 1
-    save_json(init_path(), init)
-    # 추가: system 로그
-    s = load_json(session_path(), {})
-    LogManager(s.get("id", s.get("title", "Session"))).append_system(
-        "init", {"action": "next", "index": init["index"], "round": init["round"]}
-    )
-    click.echo(f"Turn -> index={init['index']} round={init['round']}")
+__all__ = ["cli"]
 
 
-@init.command("delay")
-@click.argument("name")
-def init_delay(name):
-    """대상을 보류로 표시 (현재 턴이면 다음으로 진행)"""
-    init = load_json(init_path(), None)
-    if init is None:
-        raise click.UsageError("No encounter. Run: trpg enc start")
-    idx = init["index"]
-    for i, e in enumerate(init["order"]):
-        if e["name"] == name and not e.get("delayed"):
-            e["delayed"] = True
-            if i == idx:
-                init["index"] += 1
-                if init["index"] >= len(init["order"]):
-                    init["index"] = 0
-                    init["round"] += 1
-            save_json(init_path(), init)
-            # 추가: system 로그
-            s = load_json(session_path(), {})
-            LogManager(s.get("id", s.get("title", "Session"))).append_system(
-                "init",
-                {
-                    "action": "delay",
-                    "name": name,
-                    "index": init["index"],
-                    "round": init["round"],
-                },
-            )
-            click.echo(f"Delayed: {name}")
-            return
-    click.echo(f"Not found or already delayed: {name}")
-
-
-@init.command("return")
-@click.argument("name")
-def init_return(name):
-    """보류된 대상을 같은 라운드 꼬리로 재진입"""
-    init = load_json(init_path(), None)
-    if init is None:
-        raise click.UsageError("No encounter. Run: trpg enc start")
-    order = init["order"]
-    idx = init["index"]
-    for i, e in enumerate(order):
-        if e["name"] == name and e.get("delayed"):
-            e["delayed"] = False
-            ent = order.pop(i)
-            order.append(ent)
-            if i < idx:
-                init["index"] -= 1
-            init["index"] %= len(order)
-            save_json(init_path(), init)
-            # 추가: system 로그
-            s = load_json(session_path(), {})
-            LogManager(s.get("id", s.get("title", "Session"))).append_system(
-                "init",
-                {
-                    "action": "return",
-                    "name": name,
-                    "index": init["index"],
-                    "round": init["round"],
-                },
-            )
-            click.echo(f"Returned: {name}")
-            return
-    click.echo(f"Not found or not delayed: {name}")
-
-
-# -------------------------------------------------------------------
-# roll
-# -------------------------------------------------------------------
-@cli.command("roll")
-@click.argument("formula")
-@click.option("--as", "actor", default=None, help="굴림 주체 이름")
-def cmd_roll(formula, actor):
-    """주사위 굴림"""
-    s = load_json(session_path(), {})
-    if not s:
-        raise click.UsageError("No session found. Run: trpg session new <title> first.")
-    res = dice_roll(formula)
-    click.echo(f"Roll {formula} -> total={res['total']} detail={res['detail']}")
-    LogManager(s.get("id", s.get("title", "Session"))).append_system(
-        "dice", {"actor": actor, "formula": formula, **res}
-    )
-
-
-# -------------------------------------------------------------------
-# log
-# -------------------------------------------------------------------
-@cli.group()
-def log():
-    """로그 기록"""
-
-
-@log.command("add")
-@click.argument("text", nargs=-1)
-@click.option("--scene", default=None)
-def log_add(text, scene):
-    """내러티브 로그 추가"""
-    s = load_json(session_path(), {})
-    if not s:
-        raise click.UsageError("No session found. Run: trpg session new <title> first.")
-    text = " ".join(text)
-    LogManager(s.get("id", s.get("title", "Session"))).append_narrative(text=text, scene=scene)
-    click.echo("Narrative logged")
-
-
-# -------------------------------------------------------------------
-# export
-# -------------------------------------------------------------------
-@cli.command("export")
-@click.argument("fmt", type=click.Choice(["md", "json"]))
-def export_cmd(fmt):
-    """로그 내보내기 (md/json)"""
-    s = load_json(session_path(), {})
-    if not s:
-        raise click.UsageError("No session found. Run: trpg session new <title> first.")
-    sid = s.get("id", s.get("title", "Session"))
-    path = LogManager(sid).export(fmt, display_title=s.get("title", "Session"))
-    click.echo(f"Exported -> {path}")
+if __name__ == "__main__":
+    cli()

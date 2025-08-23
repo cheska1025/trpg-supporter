@@ -1,3 +1,7 @@
 ﻿# 기본 텍스트는 LF로
 * text=auto eol=lf
 *.ps1 text eol=crlf
+*.drawio filter=lfs diff=lfs merge=lfs -text
+*.png filter=lfs diff=lfs merge=lfs -text
+*.jpg filter=lfs diff=lfs merge=lfs -text
+docs/site/assets/* filter=lfs diff=lfs merge=lfs -text

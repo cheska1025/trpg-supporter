@@ -1,7 +1,6 @@
-from datetime import datetime
+from __future__ import annotations
 
-from sqlalchemy import String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Column, Integer, String
 
 from .base import Base
 
@@ -9,6 +8,5 @@ from .base import Base
 class Player(Base):
     __tablename__ = "players"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    name: Mapped[str] = mapped_column(String(100), nullable=False)
-    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    id = Column(Integer, primary_key=True)
+    name = Column(String(64), nullable=False)

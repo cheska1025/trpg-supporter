@@ -2,14 +2,14 @@ from core.dice import roll
 from core.initiative import Tracker
 
 
-def test_roll_basic():
+def test_roll_basic() -> None:
     r = roll("2d6+1")
     assert r.formula == "2d6+1"
     assert isinstance(r.total, int)
     assert len(r.rolls) == 2
 
 
-def test_initiative_cycle():
+def test_initiative_cycle() -> None:
     t = Tracker()
     t.add("A", 15)
     t.add("B", 10)

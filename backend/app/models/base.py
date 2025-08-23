@@ -1,5 +1,8 @@
-from sqlalchemy.orm import DeclarativeBase
+from __future__ import annotations
 
+from typing import Any
 
-class Base(DeclarativeBase):
-    pass
+from sqlalchemy.orm import declarative_base
+
+Base: Any = declarative_base()
+metadata: Any = Base.metadata

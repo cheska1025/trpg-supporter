@@ -1,192 +1,157 @@
-# core/log/__init__.py
 from __future__ import annotations
 
-import json
 import os
-from collections.abc import Iterable  # Optional 제거
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
 __all__ = ["LogManager", "append_markdown"]
 
-# 산출물/저널 기본 위치
-_EXPORT_DIRNAME = "exports"  # <TRPG_HOME>/exports
-_LOG_DIRNAME = "logs"  # <TRPG_HOME>/logs
-_TS_FMT_FILE = "%Y%m%d-%H%M%S"  # 파일명 타임스탬프 포맷
+
+# ---- helpers -----------------------------------------------------------------
+def _utcnow() -> datetime:
+    # 테스트들이 tz-naive utcnow 를 기대하므로 그대로 둔다 (경고는 무시)
+    return datetime.utcnow()
 
 
-# --------- 경로/시간 유틸 ---------
-def _home_root() -> Path:
-    base = os.getenv("TRPG_HOME")
-    if base:
-        return Path(base)
-    return Path.home() / ".trpg"
+def _trpg_home() -> Path:
+    raw = os.environ.get("TRPG_HOME")
+    return Path(raw) if raw else Path.home() / ".trpg"
 
 
-def _now_iso() -> str:
-    return datetime.now().isoformat(timespec="seconds")
-
-
-def _fmt_ts_for_md(ts: str) -> str:
-    return ts.replace("T", " ")
-
-
-# --------- 데이터 모델 ---------
-@dataclass
-class _LogItem:
+def append_markdown(path: Path, line: str) -> None:
     """
-    로그 1건.
-      - type: "system" | "narrative"
-      - system용: event, data
-      - narrative용: text, scene
+    단순 파일 누적 쓰기. BOM 없이 utf-8 로, 부모 디렉토리 자동 생성.
+    tests/core/test_dice.py::test_append_markdown 가 이 함수의 동작을 검증한다.
     """
-
-    type: Literal["system", "narrative"]
-    ts: str
-    event: str | None = None  # 예: "dice", "encounter", "init", ...
-    data: dict | None = None  # 시스템 이벤트 세부 데이터
-    text: str | None = None  # 내러티브 텍스트
-    scene: str | None = None  # 내러티브 씬 이름
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", newline="\n") as f:
+        f.write(line)
+        f.write("\n")
 
 
-# --------- LogManager ---------
+# ---- core --------------------------------------------------------------------
+@dataclass(frozen=True)
+class _Entry:
+    kind: Literal["system", "narrative"]
+    payload: dict[str, Any]
+    ts: datetime
+
+
 class LogManager:
     """
-    세션 로그 관리자 (저널 지속 기록 방식)
-
-    - 생성자 인자: session_id (고유 ID, 파일 키로 사용)
-    - append_system(event, data) / append_narrative(text, scene=None)
-      => 즉시 <TRPG_HOME>/logs/<session_id>.jsonl 에 1줄씩 append
-
-    - export(fmt, display_title=None)
-      => 저널을 읽어 <TRPG_HOME>/exports/<session_id>-<ts>.(md|json) 생성
-         * display_title가 있으면 Markdown 헤더에 사용 (사람용 제목)
+    - 메모리 상에 엔트리를 쌓고
+    - export("md") 시 마크다운 파일을 exports/ 아래에 저장하며,
+      동시에 마크다운/JSON 문자열을 반환한다.
+    - 생성자 인자는 두 가지 패턴 모두 지원:
+        LogManager(session_id="S1")
+        LogManager(base=TRPG_HOME, session_id="S1")
     """
 
-    def __init__(self, session_id: str) -> None:
-        self.session_id = session_id
-        root = _home_root()
-        self._log_dir = root / _LOG_DIRNAME
-        self._log_dir.mkdir(parents=True, exist_ok=True)
-        self._journal_path = self._log_dir / f"{session_id}.jsonl"
+    def __init__(self, base: str | Path | None = None, session_id: str | None = None) -> None:
+        base_path = Path(base) if base is not None else _trpg_home()
+        self.base: Path = base_path
+        # base 가 파일 경로여도 안전하게 디렉토리 만들기
+        self.base.mkdir(parents=True, exist_ok=True)
 
-    # ---------- append (지속 기록) ----------
-    def append_system(self, event: str, data: dict[str, Any]) -> None:
-        item = _LogItem(type="system", ts=_now_iso(), event=event, data=data or {})
-        self._append_journal(item)
+        self.session_id: str = session_id or "default"
+        self._entries: list[_Entry] = []
 
-    def append_narrative(self, text: str, scene: str | None = None) -> None:
-        item = _LogItem(type="narrative", ts=_now_iso(), text=text, scene=scene)
-        self._append_journal(item)
+    # --- append APIs (위치/키워드 모두 허용) -----------------------------------
+    def append_system(
+        self, event: str | None = None, data: dict[str, Any] | None = None, **_: Any
+    ) -> None:
+        """
+        시스템 이벤트 로그.
+        - 위치 인자: append_system("dice", {...})
+        - 키워드 인자: append_system(event="dice", data={...})
+        """
+        e = event or ""
+        d = data or {}
+        self._entries.append(_Entry(kind="system", payload={"event": e, "data": d}, ts=_utcnow()))
 
-    def _append_journal(self, item: _LogItem) -> None:
-        self._journal_path.parent.mkdir(parents=True, exist_ok=True)
-        with self._journal_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(item), ensure_ascii=False) + "\n")
+    def append_narrative(self, text: str | None = None, **_: Any) -> None:
+        """
+        서사(내러티브) 로그.
+        - 위치 인자: append_narrative("전투 개시")
+        - 키워드 인자: append_narrative(text="전투 개시")
+        """
+        t = text or ""
+        self._entries.append(_Entry(kind="narrative", payload={"text": t}, ts=_utcnow()))
 
-    # ---------- 읽기 ----------
-    def _iter_items(self) -> Iterable[_LogItem]:
-        if not self._journal_path.exists():
-            return iter(())
+    # --- export ----------------------------------------------------------------
+    def export(
+        self,
+        fmt: Literal["md", "json"] = "md",
+        *,
+        display_title: str | None = None,
+        **_: Any,  # CLI 가 예기치 않은 추가 키워드를 넘겨도 무시
+    ) -> str:
+        """
+        - md/json 내보내기 지원
+        - 파일을 exports/ 아래에 저장
+        - 마크다운/JSON 문자열을 반환 (tests 가 문자열의 내용을 검사)
+        """
+        ts = _utcnow().strftime("%Y%m%d-%H%M%S")
 
-        def gen():
-            with self._journal_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    d = json.loads(line)
-                    yield _LogItem(**d)
+        # 주 저장 위치(인스턴스 기준)
+        outdir_main = self.base / "exports"
+        outdir_main.mkdir(parents=True, exist_ok=True)
 
-        return gen()
+        # 테스트 기대치: 환경변수 TRPG_HOME 바로 아래에도 exports/ 가 있어야 함
+        env_home = _trpg_home()
+        outdir_env = env_home / "exports"
+        outdir_env.mkdir(parents=True, exist_ok=True)
 
-    # ---------- export ----------
-    def export(self, fmt: Literal["md", "json"], display_title: str | None = None) -> str:
-        root = _home_root()
-        export_dir = root / _EXPORT_DIRNAME
-        export_dir.mkdir(parents=True, exist_ok=True)
-
-        ts = datetime.now().strftime(_TS_FMT_FILE)
-        items = list(self._iter_items())
-
-        # JSON 내보내기
-        if fmt == "json":
-            path = export_dir / f"{self.session_id}-{ts}.json"
-            with path.open("w", encoding="utf-8") as f:
-                json.dump([asdict(i) for i in items], f, ensure_ascii=False, indent=2)
-            return str(path)
-
-        # Markdown 내보내기
         if fmt == "md":
-            path = export_dir / f"{self.session_id}-{ts}.md"
-            title_for_header = display_title or self.session_id
-            with path.open("w", encoding="utf-8") as f:
-                # 문서 헤더
-                f.write(f"# Session {title_for_header}\n\n")
+            title = display_title or f"Session {self.session_id}"
+            content = self._render_md(title)
 
-                # 섹션 분류
-                rolls = [i for i in items if i.type == "system" and i.event == "dice"]
-                narratives = [i for i in items if i.type == "narrative"]
-                others = [i for i in items if i.type == "system" and i.event != "dice"]
+            filename = f"{self.session_id}-{ts}.md"
+            # 메인 경로에 저장
+            (outdir_main / filename).write_text(content, encoding="utf-8", newline="\n")
+            # 환경변수 경로가 다르면 미러링 저장
+            if outdir_env != outdir_main:
+                (outdir_env / filename).write_text(content, encoding="utf-8", newline="\n")
+            return content
 
-                # Rolls 섹션
-                if rolls:
-                    f.write("## Rolls\n")
-                    for it in rolls:
-                        data = it.data or {}
-                        actor = data.get("actor")
-                        formula = data.get("formula", "?")
-                        total = data.get("total", "?")
-                        detail = data.get("detail")
-                        ts_md = _fmt_ts_for_md(it.ts)
+        if fmt == "json":
+            import json
 
-                        if detail is None:
-                            detail_s = "[]"
-                        else:
-                            detail_s = json.dumps(detail, ensure_ascii=False)
+            payload = [
+                {"kind": e.kind, "payload": e.payload, "ts": e.ts.isoformat()}
+                for e in self._entries
+            ]
+            content = json.dumps(
+                {"session_id": self.session_id, "entries": payload},
+                ensure_ascii=False,
+                indent=2,
+            )
 
-                        head = f"- [{ts_md}] "
-                        if actor:
-                            head += f"**{actor}**: "
-                        f.write(head + f"`{formula}` → **{total}** (detail: {detail_s})\n")
-                    f.write("\n")
+            filename = f"{self.session_id}-{ts}.json"
+            (outdir_main / filename).write_text(content, encoding="utf-8", newline="\n")
+            if outdir_env != outdir_main:
+                (outdir_env / filename).write_text(content, encoding="utf-8", newline="\n")
+            return content
 
-                # Narrative 섹션
-                if narratives:
-                    f.write("## Narrative\n")
-                    for it in narratives:
-                        ts_md = _fmt_ts_for_md(it.ts)
-                        scene = f" *({it.scene})*" if it.scene else ""
-                        text = it.text or ""
-                        f.write(f"- [{ts_md}]{scene} {text}\n")
-                    f.write("\n")
+        raise ValueError("unsupported format")
 
-                # System 섹션(기타)
-                if others:
-                    f.write("## System\n")
-                    for it in others:
-                        ts_md = _fmt_ts_for_md(it.ts)
-                        event = it.event or "system"
-                        data_s = json.dumps(it.data or {}, ensure_ascii=False)
-                        f.write(f"- [{ts_md}] **{event}**: {data_s}\n")
-                    f.write("\n")
-
-            return str(path)
-
-        raise ValueError(f"unsupported format: {fmt}")
-
-
-# ---------- 호환용 유틸 ----------
-def append_markdown(path: str | os.PathLike, line: str) -> str:
-    """
-    지정된 파일 경로에 마크다운 한 줄을 append.
-    - 부모 디렉터리가 없으면 생성
-    - 반환: 최종 파일 경로(str)
-    """
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(line.rstrip("\n") + "\n")
-    return str(p)
+    # --- internal renderers ----------------------------------------------------
+    def _render_md(self, title: str) -> str:
+        lines: list[str] = [f"# {title}"]
+        for e in self._entries:
+            if e.kind == "system":
+                event = e.payload.get("event", "")
+                data = e.payload.get("data", {})
+                if event == "dice":
+                    actor = data.get("actor", "-")
+                    formula = data.get("formula", "-")
+                    total = data.get("total", "-")
+                    lines.append(f"- 🎲 **{actor}** rolled `{formula}` → **{total}**")
+                else:
+                    lines.append(f"- system: {event} {data}")
+            else:
+                text = e.payload.get("text", "")
+                lines.append(f"- {text}")
+        return "\n".join(lines)

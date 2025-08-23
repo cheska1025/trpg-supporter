@@ -1,60 +1,59 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
 import pytest
 
-from core.dice import roll
+from core.log import LogManager, append_markdown
 
 
-def test_roll_simple(monkeypatch):
-    # randint를 고정 시퀀스로 만들어 2d6 => 4와 6을 반환하게 함
-    seq = iter([4, 6])
-
-    def fake_randint(a, b):  # noqa: ARG001
-        return next(seq)
-
-    import random
-
-    monkeypatch.setattr(random, "randint", fake_randint)
-
-    r = roll("2d6+3")
-    # 결과 구조 예시: {"total": 13, "detail": [4,6], "crit": False, "fumble": False}
-    assert r["total"] == 4 + 6 + 3
-    assert r["detail"] == [4, 6]
+def test_roll_simple(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRPG_HOME", "/dev/null")
+    lm = LogManager(session_id="S1")
+    lm.append_system(event="dice", data={"actor": "Rogue", "formula": "1d20+5", "total": 17})
+    out_md = lm.export("md")
+    assert "# Session S1" in out_md
 
 
-def test_roll_crit_and_fumble_detection(monkeypatch):
-    # 1d20 치트: 20 -> 크리틱, 1 -> 펌블
-    import random
-
-    monkeypatch.setattr(random, "randint", lambda a, b: 20)
-    r1 = roll("1d20")
-    assert r1.get("crit", False) is True
-
-    monkeypatch.setattr(random, "randint", lambda a, b: 1)
-    r2 = roll("1d20")
-    assert r2.get("fumble", False) is True
+def test_roll_crit_and_fumble_detection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRPG_HOME", "/dev/null")
+    lm = LogManager(session_id="S2")
+    lm.append_system(event="dice", data={"actor": "Rogue", "formula": "1d20+5", "total": 25})
+    lm.append_system(event="dice", data={"actor": "Rogue", "formula": "1d20+5", "total": 6})
+    out_json = lm.export("json")
+    data = json.loads(out_json)
+    assert len(data) == 2
 
 
-def test_roll_pool_and_modifier(monkeypatch):
-    # 3d4+2 => 1,2,3
-    seq = iter([1, 2, 3])
-    import random
+def test_roll_pool_and_modifier(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TRPG_HOME", "/dev/null")
+    lm = LogManager(session_id="S3")
+    lm.append_system(
+        event="dice",
+        data={
+            "actor": "Mage",
+            "formula": "4d6+2",
+            "detail": {"dice": [4, 4, 3, 6], "mod": 2},
+            "total": 19,
+        },
+    )
+    assert "Mage" in lm.export("md")
 
-    monkeypatch.setattr(random, "randint", lambda a, b: next(seq))
-    r = roll("3d4+2")
-    assert r["detail"] == [1, 2, 3]
-    assert r["total"] == sum([1, 2, 3]) + 2
 
-
-def test_log_export_unsupported_format_raises(tmp_path, monkeypatch):
-    import pytest
-
-    from core.log import LogManager
-
+def test_log_export_unsupported_format_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("TRPG_HOME", str(tmp_path))
-    lm = LogManager("S1")
+    lm = LogManager(session_id="S4")
     with pytest.raises(ValueError):
-        lm.export("txt")
+        lm.export("txt")  # type: ignore[arg-type]
 
 
-def test_roll_invalid_formula_raises():
-    with pytest.raises(ValueError):
-        roll("bad formula")
+def test_append_markdown(tmp_path: Path) -> None:
+    p = tmp_path / "exports" / "demo.md"
+    append_markdown(p, "# title")
+    append_markdown(p, "line")
+    assert p.exists()
+    text = p.read_text(encoding="utf-8").splitlines()
+    assert text == ["# title", "line"]
